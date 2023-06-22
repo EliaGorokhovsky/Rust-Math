@@ -1,9 +1,7 @@
-use std::sync::Arc;
-
 use rand::{distributions::Distribution, Rng};
 
 // This is only used for .after()
-use bevy::prelude::*;
+use bevy::{prelude::*, transform};
 
 const NUM_NODES: usize = 10;
 const P_EDGE: f64 = 0.5;
@@ -17,18 +15,20 @@ const WINDOW_HEIGHT: f32 = 300.0;
 // Neighbors of a node or nodes of a graph
 #[derive(bevy::prelude::Component)]
 struct Nodes {
-	entries: Vec<u32>,
+	entries: Vec<Entity>,
+	transforms: Vec<Transform>
 }
 
 #[derive(bevy::prelude::Component)]
-struct Node {
-	index: usize,
+struct Edge;
+
+#[derive(bevy::prelude::Component)]
+struct Movement {
+	velocity: Vec3,
+	acceleration: Vec3,
 }
 
-fn setup(
-	mut commands: bevy::prelude::Commands,
-	asset_server: bevy::prelude::Res<bevy::asset::AssetServer>,
-) {
+fn setup(mut commands: bevy::prelude::Commands) {
 	// Make camera
 	commands.spawn(bevy::core_pipeline::prelude::Camera2dBundle::default());
 }
@@ -45,11 +45,23 @@ fn make_nodes(
 		let y = rng.gen_range(-WINDOW_HEIGHT..WINDOW_HEIGHT);
 		let pos: bevy::math::Vec3 = bevy::math::Vec3 { x, y, z: 0.0 };
 		commands.spawn((
-			Nodes { entries: vec![] },
+			Nodes { entries: vec![], transforms: vec![] },
 			bevy::sprite::SpriteBundle {
 				texture: handle.clone(),
 				transform: bevy::prelude::Transform::from_translation(pos),
 				..bevy::utils::default()
+			},
+			Movement {
+				velocity: Vec3 {
+					x: 0.0,
+					y: 0.0,
+					z: 0.0,
+				},
+				acceleration: Vec3 {
+					x: 0.0,
+					y: 0.0,
+					z: 0.0,
+				},
 			},
 		));
 	}
@@ -66,17 +78,20 @@ fn make_edges(
 	let mut pairs = query.iter_combinations_mut::<2>();
 	let distribution = rand::distributions::Bernoulli::new(P_EDGE).unwrap();
 	let mut generator = rand::thread_rng();
-	while let Some([(e1, mut n1, t1), (e2, mut n2, t2)]) = pairs.fetch_next() {
+	while let Some([(e1, mut n1, &t1), (e2, mut n2, &t2)]) = pairs.fetch_next() {
 		if distribution.sample(&mut generator) {
-			n1.entries.push(e2.index());
-			n2.entries.push(e1.index());
+			n1.entries.push(e2);
+			n2.entries.push(e1);
+			n1.transforms.push(t2);
+			n2.transforms.push(t1);
 			let dist = t1.translation.distance(t2.translation);
 			let diff = t2.translation - t1.translation;
 			let pos = (t1.translation + t2.translation) / 2.0;
 			let angle = bevy::math::Quat::from_rotation_z(diff.y.atan2(diff.x)); // Rotate about the z axis
 			commands.spawn((
 				Nodes {
-					entries: vec![e1.index(), e2.index()],
+					entries: vec![e1, e2],
+					transforms: vec![t1, t2]
 				},
 				bevy::sprite::SpriteBundle {
 					sprite: bevy::sprite::Sprite {
@@ -96,6 +111,45 @@ fn make_edges(
 	}
 }
 
+// Make everything with a position, velocity, and acceleration move accordingly
+fn tick_physics(
+	time: bevy::prelude::Res<bevy::prelude::Time>,
+	mut query: bevy::prelude::Query<(&mut Movement, &mut bevy::prelude::Transform), Without<Edge>>,
+) {
+	for (mut movement, mut transform) in query.iter_mut() {
+		let acceleration = movement.acceleration;
+		transform.translation += movement.velocity * time.delta_seconds();
+		movement.velocity += acceleration * time.delta_seconds();
+	}
+}
+
+fn move_away(
+	mut query: bevy::prelude::Query<(&mut Movement, &bevy::prelude::Transform), Without<Edge>>,
+) {
+	for (mut movement, transform) in query.iter_mut() {
+		movement.acceleration = transform.translation * 0.1;
+	}
+}
+
+fn follow_nodes(
+	mut query: bevy::prelude::Query<
+		(&Edge, &Nodes, &mut Transform, &mut Sprite),
+		Without<Movement>,
+	>
+) {
+	for (_, nodes, mut transform, mut sprite) in query.iter_mut() {
+		let t1 = nodes.transforms.first().unwrap();
+		let t2 = nodes.transforms.last().unwrap();
+		let dist = t1.translation.distance(t2.translation);
+		let diff = t2.translation - t1.translation;
+		let pos = (t1.translation + t2.translation) / 2.0;
+		let angle = bevy::math::Quat::from_rotation_z(diff.y.atan2(diff.x));
+		transform.translation = pos;
+		transform.rotation = angle;
+		sprite.custom_size = Some(bevy::math::Vec2::new(dist, 2.0));
+	}
+}
+
 fn main() {
 	bevy::prelude::App::new()
 		.add_plugins(bevy::prelude::DefaultPlugins)
@@ -103,5 +157,8 @@ fn main() {
 		.add_startup_system(make_nodes)
 		.add_startup_system(apply_system_buffers.after(make_nodes).before(make_edges))
 		.add_startup_system(make_edges)
+		.add_system(move_away)
+		.add_system(tick_physics)
+		.add_system(follow_nodes)
 		.run();
 }
