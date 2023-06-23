@@ -15,8 +15,7 @@ const WINDOW_HEIGHT: f32 = 300.0;
 // Neighbors of a node or nodes of a graph
 #[derive(bevy::prelude::Component)]
 struct Nodes {
-	entries: Vec<Entity>,
-	transforms: Vec<Transform>
+	entries: Vec<Entity>
 }
 
 #[derive(bevy::prelude::Component)]
@@ -45,7 +44,7 @@ fn make_nodes(
 		let y = rng.gen_range(-WINDOW_HEIGHT..WINDOW_HEIGHT);
 		let pos: bevy::math::Vec3 = bevy::math::Vec3 { x, y, z: 0.0 };
 		commands.spawn((
-			Nodes { entries: vec![], transforms: vec![] },
+			Nodes { entries: vec![]},
 			bevy::sprite::SpriteBundle {
 				texture: handle.clone(),
 				transform: bevy::prelude::Transform::from_translation(pos),
@@ -82,16 +81,14 @@ fn make_edges(
 		if distribution.sample(&mut generator) {
 			n1.entries.push(e2);
 			n2.entries.push(e1);
-			n1.transforms.push(t2);
-			n2.transforms.push(t1);
 			let dist = t1.translation.distance(t2.translation);
 			let diff = t2.translation - t1.translation;
 			let pos = (t1.translation + t2.translation) / 2.0;
 			let angle = bevy::math::Quat::from_rotation_z(diff.y.atan2(diff.x)); // Rotate about the z axis
 			commands.spawn((
+				Edge,
 				Nodes {
-					entries: vec![e1, e2],
-					transforms: vec![t1, t2]
+					entries: vec![e1, e2]
 				},
 				bevy::sprite::SpriteBundle {
 					sprite: bevy::sprite::Sprite {
@@ -132,14 +129,15 @@ fn move_away(
 }
 
 fn follow_nodes(
-	mut query: bevy::prelude::Query<
-		(&Edge, &Nodes, &mut Transform, &mut Sprite),
+	mut edges: bevy::prelude::Query<
+		(&Edge, &Nodes, &mut bevy::prelude::Transform, &mut bevy::sprite::Sprite),
 		Without<Movement>,
-	>
+	>,
+	all_nodes: bevy::prelude::Query<(Entity, &bevy::prelude::Transform), Without<Edge>>
 ) {
-	for (_, nodes, mut transform, mut sprite) in query.iter_mut() {
-		let t1 = nodes.transforms.first().unwrap();
-		let t2 = nodes.transforms.last().unwrap();
+	for (_, nodes, mut transform, mut sprite) in edges.iter_mut() {
+		let (_, t1) = all_nodes.get(*nodes.entries.first().unwrap()).unwrap();
+		let (_, t2) = all_nodes.get(*nodes.entries.last().unwrap()).unwrap();
 		let dist = t1.translation.distance(t2.translation);
 		let diff = t2.translation - t1.translation;
 		let pos = (t1.translation + t2.translation) / 2.0;
