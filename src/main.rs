@@ -4,11 +4,11 @@ use rand::{distributions::Distribution, Rng};
 
 // This is only used for .after()
 use bevy::{
-	prelude::{shape::Plane, *},
-	transform, utils::petgraph::dot::Config,
+	prelude::*,
+	transform,
 };
 
-const NUM_NODES: usize = 30;
+const NUM_NODES: usize = 20;
 const NUM_FIXED_NODES: usize = 30;
 const BARYCENTER_METHOD_RADIUS: f32 = 275.0;
 const P_EDGE: f64 = 0.1;
@@ -20,6 +20,7 @@ const ELECTRIC_FORCE: f32 = 1000000.0;
 const WALL_REPULSION: f32 = 100000.0;
 const WINDOW_WIDTH: f32 = 500.0;
 const WINDOW_HEIGHT: f32 = 300.0;
+const PROXIMITY_FACTOR: f32 = 13.0;
 
 // Neighbors of a node or nodes of a graph
 #[derive(bevy::prelude::Component)]
@@ -104,6 +105,45 @@ fn make_edges(
 			n1.entries.push(e2);
 			n2.entries.push(e1);
 			let dist = t1.translation.distance(t2.translation);
+			let diff = t2.translation - t1.translation;
+			let pos = (t1.translation + t2.translation) / 2.0;
+			let angle = bevy::math::Quat::from_rotation_z(diff.y.atan2(diff.x)); // Rotate about the z axis
+			commands.spawn((
+				Edge,
+				Nodes {
+					entries: vec![e1, e2],
+				},
+				bevy::sprite::SpriteBundle {
+					sprite: bevy::sprite::Sprite {
+						color: bevy::render::color::Color::rgb(0.25, 0.25, 0.75),
+						custom_size: Some(bevy::math::Vec2::new(dist, 2.0)),
+						..bevy::utils::default()
+					},
+					transform: bevy::prelude::Transform {
+						translation: pos,
+						rotation: angle,
+						..bevy::utils::default()
+					},
+					..bevy::utils::default()
+				},
+			));
+		}
+	}
+}
+
+fn make_edges_by_proximity(mut commands: bevy::prelude::Commands,
+	mut query: bevy::prelude::Query<(
+		bevy::ecs::entity::Entity,
+		&mut Nodes,
+		&bevy::prelude::Transform,
+	)>,) {
+	let minimum = query.iter_combinations::<2>().map(|[(_, _, &t1), (_, _, &t2)]| t1.translation.distance(t2.translation)).fold(WINDOW_WIDTH, |x, running_min| x.min(running_min));
+	let mut pairs = query.iter_combinations_mut::<2>();
+	while let Some([(e1, mut n1, &t1), (e2, mut n2, &t2)]) = pairs.fetch_next() {
+		let dist = t1.translation.distance(t2.translation);
+		if dist < PROXIMITY_FACTOR * minimum {
+			n1.entries.push(e2);
+			n2.entries.push(e1);
 			let diff = t2.translation - t1.translation;
 			let pos = (t1.translation + t2.translation) / 2.0;
 			let angle = bevy::math::Quat::from_rotation_z(diff.y.atan2(diff.x)); // Rotate about the z axis
@@ -267,8 +307,8 @@ fn main() {
 		.add_startup_system(setup)
 		.add_startup_system(apply_system_buffers.after(setup).before(make_nodes))
 		.add_startup_system(make_nodes)
-		.add_startup_system(apply_system_buffers.after(make_nodes).before(make_edges))
-		.add_startup_system(make_edges)
+		.add_startup_system(apply_system_buffers.after(make_nodes).before(make_edges_by_proximity))
+		.add_startup_system(make_edges_by_proximity)
 		.add_startup_system(set_config)
 		//.add_startup_system(fix_nodes.after(make_edges))
 		.add_system(repel_nodes)
