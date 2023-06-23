@@ -5,7 +5,7 @@ use rand::{distributions::Distribution, Rng};
 // This is only used for .after()
 use bevy::{
 	prelude::{shape::Plane, *},
-	transform,
+	transform, utils::petgraph::dot::Config,
 };
 
 const NUM_NODES: usize = 30;
@@ -33,6 +33,14 @@ struct Edge;
 #[derive(bevy::prelude::Component)]
 struct Movement {
 	velocity: Vec3,
+}
+
+#[derive(bevy::prelude::Component)]
+struct Configuration {
+	spring_length: f32,
+	spring_force: f32,
+	spring_scale: f32,
+	electric_force: f32
 }
 
 #[derive(Resource)]
@@ -168,7 +176,8 @@ fn follow_nodes(
 	}
 }
 
-fn repel_nodes(mut nodes: Query<(Entity, &Nodes, &mut Movement, &Transform)>) {
+fn repel_nodes(mut nodes: Query<(Entity, &Nodes, &mut Movement, &Transform), Without<Configuration>>, config: Query<&Configuration>) {
+	let configuration = config.single();
 	for (_, _, mut m, _) in nodes.iter_mut() {
 		m.velocity = Vec3 {
 			x: 0.0,
@@ -181,11 +190,11 @@ fn repel_nodes(mut nodes: Query<(Entity, &Nodes, &mut Movement, &Transform)>) {
 	while let Some([(e1, n1, mut m1, t1), (e2, n2, mut m2, t2)]) = pairs.fetch_next() {
 		let dist = t1.translation.distance(t2.translation);
 		let diff = (t2.translation - t1.translation).normalize();
-		let repulsion = diff * 1.0 / (dist * dist) * ELECTRIC_FORCE;
+		let repulsion = diff * 1.0 / (dist * dist) * configuration.electric_force;
 		m1.velocity -= repulsion;
 		m2.velocity += repulsion;
 		if (*n2).entries.contains(&e1) || (*n2).entries.contains(&e2) {
-			let force = diff * ((dist - SPRING_LENGTH) / SPRING_SCALE).log10() * SPRING_FORCE;
+			let force = diff * ((dist - configuration.spring_length) / configuration.spring_scale).log10() * configuration.spring_force;
 			m1.velocity += force;
 			m2.velocity -= force;
 		}
@@ -227,6 +236,31 @@ fn tick_barycenters(mut nodes: Query<(Entity, &Nodes, &mut Transform)>, entities
 	t.translation = pos / degree;
 }
 
+fn set_config(mut commands: Commands) {
+	commands.spawn(Configuration {
+		spring_length: SPRING_LENGTH,
+		spring_force: SPRING_FORCE,
+		spring_scale: SPRING_SCALE,
+		electric_force: ELECTRIC_FORCE,
+	});
+}
+
+fn get_keyboard_input(mut query: Query<&mut Configuration>, keys: Res<Input<KeyCode>>) {
+	let mut config = query.single_mut();
+	if keys.just_pressed(KeyCode::W) {
+		config.spring_force *= 1.2;
+	}
+	if keys.just_pressed(KeyCode::S) {
+		config.spring_force /= 1.2;
+	}
+	if keys.just_pressed(KeyCode::A) {
+		config.spring_length *= 1.2;
+	}
+	if keys.just_pressed(KeyCode::D) {
+		config.spring_length /= 1.2;
+	}
+}
+
 fn main() {
 	bevy::prelude::App::new()
 		.add_plugins(bevy::prelude::DefaultPlugins)
@@ -235,10 +269,12 @@ fn main() {
 		.add_startup_system(make_nodes)
 		.add_startup_system(apply_system_buffers.after(make_nodes).before(make_edges))
 		.add_startup_system(make_edges)
+		.add_startup_system(set_config)
 		//.add_startup_system(fix_nodes.after(make_edges))
 		.add_system(repel_nodes)
 		.add_system(tick_physics)
 		.add_system(follow_nodes)
+		.add_system(get_keyboard_input)
 		//.add_system(tick_barycenters)
 		.run();
 }
